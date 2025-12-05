@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BoltProxy</title>
+  <link rel="icon" href="/favicon.ico" />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="/scram/scramjet.all.js"></script>
+  <script src="/baremux/index.js" defer></script>
+  <script src="/epoxy/index.js" defer></script>
+  <script src="/register-sw.js" defer></script>
+  <script src="/search.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <div class="tab-strip">
+      <div class="tabs" id="tabs"></div>
+      <button class="tab-add" id="new-tab" type="button" aria-label="New tab">+</button>
+    </div>
+
+    <form class="nav-bar" id="url-form" autocomplete="off">
+      <div class="nav-buttons">
+        <button class="nav-btn" id="back" type="button" aria-label="Back">←</button>
+        <button class="nav-btn" id="forward" type="button" aria-label="Forward">→</button>
+        <button class="nav-btn" id="reload" type="button" aria-label="Reload">⟳</button>
+      </div>
+      <div class="address">
+        <input id="url-input" type="text" placeholder="Enter a site or paste a link" spellcheck="false">
+      </div>
+      <button class="go" type="submit">Go</button>
+    </form>
+
+    <div class="status-bar">
+      <span class="status-indicator" id="status-indicator" aria-hidden="true"></span>
+      <span class="status-text" id="status-text">Initializing proxy...</span>
+    </div>
+
+    <div class="viewport" id="viewport"></div>
+  </div>
+</body>
+</html>
