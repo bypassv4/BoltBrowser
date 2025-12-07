@@ -16,7 +16,17 @@ let zoomLevel = 1;
 
 let scramjetController = null;
 let bareConnection = null;
-const SEARCH_TEMPLATE = "https://www.google.com/search?q=%s";
+const SEARCH_TEMPLATE = "https://www.duckduckgo.com/search?q=%s";
+const IFRAME_ALLOW = [
+  "geolocation",
+  "microphone",
+  "camera",
+  "clipboard-read",
+  "clipboard-write",
+  "autoplay",
+  "payment",
+  "display-capture"
+];
 
 const proxyReady = setupProxy().catch((err) => {
   console.error("Failed to initialize proxy", err);
@@ -77,7 +87,7 @@ const START_PAGE = `
     <h1>Open a tab and start browsing</h1>
     <p>Drop in any link. Everything loads inside this window through the proxy (handy for Discord QR and captchas).</p>
     <ul>
-      <li><strong>Tabs up top</strong>: click + to create, A- to close.</li>
+      <li><strong>Tabs up top</strong>: click + to create, x to close.</li>
       <li><strong>Address bar</strong>: paste full URLs or just a domain.</li>
       <li><strong>Stay inside</strong>: navigation stays in the embedded frame.</li>
     </ul>
@@ -96,7 +106,7 @@ async function setupProxy() {
       sync: "/scram/scramjet.sync.js"
     }
   });
-  scramjetController.init();
+  await scramjetController.init();
 
   await registerSW();
   bareConnection = new BareMux.BareMuxConnection("/baremux/worker.js");
@@ -126,11 +136,27 @@ function ensureProtocol(value) {
 
 function normalizeInput(rawInput) {
   const trimmed = (rawInput || "").trim();
-  if (!trimmed) return "";
-  if (typeof search === "function") {
-    return search(trimmed, SEARCH_TEMPLATE);
+  if (!trimmed) return { navigateUrl: "", displayUrl: "" };
+
+  if (trimmed.toLowerCase().startsWith("bolt://")) {
+    const fake = new URL(trimmed.replace(/^bolt:\/\//i, "https://"));
+    const rawPath = (fake.hostname + fake.pathname).replace(/^\/+/, "");
+    const pathPart = rawPath.replace(/\/+$/, "") || "index";
+    const suffix = `${fake.search || ""}${fake.hash || ""}`;
+    const needsExt = !pathPart.split("/").pop().includes(".");
+    const filePath = (needsExt ? `${pathPart}.html` : pathPart) + suffix;
+    return {
+      navigateUrl: "/bolt/" + filePath,
+      displayUrl: `bolt://${pathPart}${suffix}`
+    };
   }
-  return ensureProtocol(trimmed);
+
+  if (typeof search === "function") {
+    const resolved = search(trimmed, SEARCH_TEMPLATE);
+    return { navigateUrl: resolved, displayUrl: resolved };
+  }
+  const ensured = ensureProtocol(trimmed);
+  return { navigateUrl: ensured, displayUrl: ensured };
 }
 
 function decodeUrl(url) {
@@ -151,9 +177,47 @@ function displayUrlFromFrame(rawUrl) {
       const targetPart = parsed.href.slice(idx + marker.length);
       if (targetPart) return decodeUrl(targetPart);
     }
+    if (parsed.pathname.startsWith("/bolt/")) {
+      const tail = parsed.pathname.slice("/bolt/".length);
+      const withoutHtml = tail.endsWith(".html") ? tail.slice(0, -5) : tail;
+      const queryHash = `${parsed.search || ""}${parsed.hash || ""}`;
+      return `bolt://${decodeUrl(withoutHtml)}${queryHash}`;
+    }
     return parsed.href;
   } catch {
     return decodeUrl(rawUrl);
+  }
+}
+
+function isBoltPath(url) {
+  return typeof url === "string" && url.startsWith("/bolt/");
+}
+
+async function boltPathExists(path) {
+  try {
+    const res = await fetch(path, { method: "HEAD", cache: "no-cache" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function renderBoltMissing(tab, path) {
+  const fileLabel = path.replace(/^\/bolt\/+/, "") || "index.html";
+  tab.iframe.srcdoc = `
+<!doctype html>
+<html>
+<head><meta charset="UTF-8"><title>Bolt file missing</title></head>
+<body style="font-family:Arial, sans-serif; background:#f7f7f9; color:#0f172a; padding:24px;">
+  <h2 style="margin:0 0 12px;">Bolt file does not exist</h2>
+  <p style="margin:0;">Could not find <strong>${fileLabel}</strong> inside <code>/bolt/</code>.</p>
+</body>
+</html>`;
+  tab.element.classList.remove("loading");
+  setStatus("Bolt file does not exist.", "idle");
+  updateTabLabel(tab, "Missing file");
+  if (tab.id === activeTabId) {
+    urlInput.value = tab.displayUrl || "";
   }
 }
 
@@ -203,20 +267,18 @@ function getFrameUrl(tab) {
 
 function setStartPage(tab) {
   tab.targetUrl = null;
-  tab.iframe.removeAttribute("src");
-  tab.iframe.srcdoc = START_PAGE;
-  updateTabLabel(tab, "");
-  applyZoom(tab);
+  tab.displayUrl = null;
+  return navigateTo(tab.id, "bolt://about");
 }
 
-function wireIframe(tab) {
-  tab.iframe.addEventListener("load", () => {
+function wireIframe(tab, iframe) {
+  iframe.addEventListener("load", () => {
     const current = getFrameUrl(tab) || tab.targetUrl;
-    const displayUrl = displayUrlFromFrame(current);
+    const displayUrl = tab.displayUrl || displayUrlFromFrame(current);
     tab.element.classList.remove("loading");
     setStatus("Loaded", "live");
     updateTabLabel(tab, displayUrl);
-    tab.targetUrl = displayUrl || tab.targetUrl;
+    tab.displayUrl = displayUrl || tab.displayUrl;
     if (tab.id === activeTabId && displayUrl) {
       urlInput.value = displayUrl;
     }
@@ -225,10 +287,13 @@ function wireIframe(tab) {
 
 function createProxiedFrame() {
   if (scramjetController) {
-    return scramjetController.createFrame();
+    const proxied = scramjetController.createFrame();
+    applyFrameDefaults(proxied.frame);
+    return proxied;
   }
 
   const fallbackFrame = document.createElement("iframe");
+  applyFrameDefaults(fallbackFrame);
   return {
     frame: fallbackFrame,
     go: (url) => {
@@ -236,6 +301,46 @@ function createProxiedFrame() {
       return Promise.resolve();
     }
   };
+}
+
+function applyFrameDefaults(iframe) {
+  if (!iframe) return;
+  iframe.classList.add("page-frame");
+  iframe.setAttribute("title", "Tab content");
+  iframe.setAttribute("allow", IFRAME_ALLOW.join("; "));
+  iframe.style.border = "none";
+}
+
+function createNativeFrame() {
+  const iframe = document.createElement("iframe");
+  applyFrameDefaults(iframe);
+  return {
+    frame: iframe,
+    go: (url) => {
+      iframe.src = url;
+      return Promise.resolve();
+    }
+  };
+}
+
+function switchFrame(tab, useProxyFrame) {
+  const nextFrame = useProxyFrame ? tab.proxyFrame : tab.nativeFrame;
+  if (!nextFrame || tab.frame === nextFrame) return;
+
+  // Remove current iframe from the DOM
+  if (tab.iframe?.parentElement) {
+    tab.iframe.parentElement.removeChild(tab.iframe);
+  }
+
+  tab.frame = nextFrame;
+  tab.iframe = nextFrame.frame;
+  viewport.appendChild(tab.iframe);
+
+  // Keep active styling in sync
+  const isActive = tab.id === activeTabId;
+  tab.iframe.classList.toggle("active", isActive);
+
+  applyZoom(tab);
 }
 
 async function createTab(initialUrl) {
@@ -246,28 +351,22 @@ async function createTab(initialUrl) {
   tabEl.className = "tab";
   tabEl.innerHTML = `
     <span class="tab__title">New Tab</span>
-    <span class="tab__close" aria-label="Close tab">A-</span>
+    <span class="tab__close" aria-label="Close tab">x</span>
   `;
 
-  const frame = createProxiedFrame();
-  const iframe = frame.frame;
-  iframe.className = "page-frame";
-  iframe.setAttribute("title", "Tab content");
-  iframe.setAttribute(
-    "allow",
-    [
-      "geolocation",
-      "microphone",
-      "camera",
-      "clipboard-read",
-      "clipboard-write",
-      "autoplay",
-      "payment",
-      "display-capture"
-    ].join("; ")
-  );
+  const proxyFrame = createProxiedFrame();
+  const nativeFrame = createNativeFrame();
 
-  const tab = { id, element: tabEl, frame, iframe, targetUrl: null };
+  const tab = {
+    id,
+    element: tabEl,
+    frame: nativeFrame,
+    iframe: nativeFrame.frame,
+    targetUrl: null,
+    displayUrl: null,
+    proxyFrame,
+    nativeFrame
+  };
   tabs.set(id, tab);
 
   tabEl.addEventListener("click", () => setActiveTab(id));
@@ -276,14 +375,16 @@ async function createTab(initialUrl) {
     closeTab(id);
   });
 
-  viewport.appendChild(iframe);
+  // Start on the native frame; navigation will swap if needed.
+  viewport.appendChild(tab.iframe);
   tabsContainer.appendChild(tabEl);
-  wireIframe(tab);
+  wireIframe(tab, proxyFrame.frame);
+  wireIframe(tab, nativeFrame.frame);
   setActiveTab(id);
-  setStartPage(tab);
-
   if (initialUrl) {
-    navigateTo(id, initialUrl);
+    await navigateTo(id, initialUrl);
+  } else {
+    await setStartPage(tab);
   }
 
   return id;
@@ -300,7 +401,11 @@ function setActiveTab(id) {
   });
 
   const tab = tabs.get(id);
-  const display = tab?.targetUrl ? displayUrlFromFrame(tab.targetUrl) : "";
+  const display = tab?.displayUrl
+    ? tab.displayUrl
+    : tab?.targetUrl
+      ? displayUrlFromFrame(tab.targetUrl)
+      : "";
   urlInput.value = display || "";
   setStatus(display ? "Focused on active tab." : "Ready to browse.", display ? "live" : "idle");
   applyZoom(tab);
@@ -333,17 +438,32 @@ function closeTab(id) {
 async function navigateTo(tabId, rawInput) {
   const tab = tabs.get(tabId);
   if (!tab) return;
-  const target = normalizeInput(rawInput);
-  if (!target) return;
+  const { navigateUrl, displayUrl } = normalizeInput(rawInput);
+  if (!navigateUrl) return;
 
-  await ensureTransport();
-  tab.targetUrl = target;
+  const isBolt = isBoltPath(navigateUrl);
+  switchFrame(tab, !isBolt);
+
+  if (!isBolt) {
+    await ensureTransport();
+  }
+  tab.targetUrl = navigateUrl;
+  tab.displayUrl = displayUrl;
+
+  if (isBolt) {
+    const exists = await boltPathExists(navigateUrl);
+    if (!exists) {
+      renderBoltMissing(tab, navigateUrl);
+      return;
+    }
+  }
+
   tab.element.classList.add("loading");
   tab.iframe.removeAttribute("srcdoc");
   setStatus("Loading...", "loading");
 
   try {
-    await tab.frame.go(target);
+    await tab.frame.go(navigateUrl);
   } catch (err) {
     console.warn("Navigation failed", err);
     setStatus("Navigation failed.", "idle");
@@ -352,10 +472,10 @@ async function navigateTo(tabId, rawInput) {
   }
 
   if (tab.id === activeTabId) {
-    urlInput.value = decodeUrl(target);
+    urlInput.value = tab.displayUrl || decodeUrl(navigateUrl);
   }
   applyZoom(tab);
-  updateTabLabel(tab, decodeUrl(target));
+  updateTabLabel(tab, tab.displayUrl || displayUrlFromFrame(navigateUrl));
 }
 
 async function handleNavSubmit(event) {
@@ -399,6 +519,8 @@ function registerNavButtons() {
     if (tab.targetUrl) {
       tab.element.classList.add("loading");
       tab.iframe.removeAttribute("srcdoc");
+      const useProxy = !isBoltPath(tab.targetUrl);
+      switchFrame(tab, useProxy);
       tryAction(() => tab.frame.go(tab.targetUrl));
     } else {
       tryAction(() => tab.iframe.contentWindow?.location.reload());

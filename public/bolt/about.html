@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BoltProxy About</title>
+  <style>
+    :root {
+      --ink: #0b1221;
+      --muted: #5a6473;
+      --accent: #1f4dd6;
+      --line: #e1e7f5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+      background: linear-gradient(135deg, #f5f8ff, #e7edff);
+      color: var(--ink);
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .card {
+      width: min(900px, 100%);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 16px 36px rgba(12, 28, 63, 0.12);
+      padding: 26px 28px;
+    }
+    h1 { margin: 0 0 8px; font-size: 26px; }
+    p { margin: 0 0 14px; color: var(--muted); line-height: 1.6; }
+    ul { margin: 10px 0 0; padding-left: 18px; line-height: 1.6; }
+    code {
+      background: #f3f6ff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 3px 7px;
+      font-size: 13px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #eef3ff;
+      color: var(--accent);
+      border: 1px solid #d7e5ff;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-weight: 700;
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="pill">BoltProxy start page</div>
+    <h1>Welcome to BoltProxy</h1>
+    <p>Use the address bar to open any site or your own bundled pages.</p>
+    <ul>
+      <li><strong>Tabs</strong>: click <code>+</code> to add, <code>x</code> to close.</li>
+      <li><strong>Built-in proxy</strong>: everything loads inside these tabs.</li>
+      <li><strong>Custom pages</strong>: bolt://</li>
+    </ul>
+  </div>
+</body>
+</html>
